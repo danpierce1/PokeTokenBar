@@ -57,7 +57,8 @@ final class CompanionStore {
     // 바뀌며 SaveTransfer 의 관대 디코딩·검증까지 새 수치 필드를 떠안는다.
 
     /// 성장 배율 — 알 부화 임계 + 진화/졸업 임계에 곱한다. 낮을수록 빨리 자란다.
-    /// 사탕 XP(RareCandy.xp)는 스케일하지 않는다 — 함께 곱하면 서로 상쇄돼 사탕만 난이도를 안 탄다.
+    /// 사탕 XP(RareCandy.xp)는 별도 10% 밸런스 값이며, 난이도 배율은 적용하지 않는다 —
+    /// 함께 곱하면 서로 상쇄돼 사탕만 난이도를 안 탄다.
     private(set) var growthDifficulty: Double
     /// 상점 배율 — 아이템·알 가격에 곱한다. 낮을수록 싸다.
     private(set) var shopDifficulty: Double
@@ -896,7 +897,7 @@ final class CompanionStore {
         state.reconcileRepresentativeSelection()
         activeGeneration += 1
         currentLine = nil
-        state.eggUsage = 0            // 새 알은 처음부터 인큐베이션(재부화에 5M 필요)
+        state.eggUsage = 0            // 새 알은 처음부터 인큐베이션(재부화에 500K 필요)
         state.eggTier = tier          // 등급 보증(nil = 보증 없음)
         state.pendingHatchID = nil    // 새 보증으로 처음부터 롤(활성 포켓몬이 있는 동안엔 원래 비어 있다)
         prefetchedLineID = nil
@@ -989,9 +990,17 @@ final class CompanionStore {
         defer { isHatching = false }
         // 프리패칭된 종이 있으면 그대로 사용(라인·스프라이트 예열됨 → 딜레이 ~0), 없으면 지금 롤.
         let base: Int?
-        if let pending = state.pendingHatchID {
+        if let pending = state.pendingHatchID,
+           PokemonAssets.hasAnimatedSprite(speciesID: pending),
+           pending != PokemonOdds.dittoSpeciesID {
             base = pending
         } else {
+            // A stale prefetch from an older build may point outside the supported range.
+            // Drop it before rolling a replacement so later generations cannot hatch.
+            if state.pendingHatchID != nil {
+                state.pendingHatchID = nil
+                save()
+            }
             base = await chooseBase()
         }
         guard let base else { return }   // 네트워크 불안정 → 알 유지, 다음 update 틱에 재시도
@@ -1030,6 +1039,12 @@ final class CompanionStore {
         prefetchInFlight = true
         defer { prefetchInFlight = false }
 
+        if let pending = state.pendingHatchID,
+           (!PokemonAssets.hasAnimatedSprite(speciesID: pending) || pending == PokemonOdds.dittoSpeciesID) {
+            // Discard prefetch IDs written by builds that allowed later generations.
+            state.pendingHatchID = nil
+            save()
+        }
         if state.pendingHatchID == nil {
             guard let id = await chooseBase() else { return }   // 오프라인 → 다음 틱 재시도
             // await 사이에 부화가 끝났거나(active != nil) 상태가 통째로 교체됐으면(세이브 불러오기)
@@ -1179,7 +1194,7 @@ final class CompanionStore {
         notifyCompanionEvent(shiny ? l.notifShinyDittoRevealTitle : l.notifDittoRevealTitle,
                              shiny ? l.notifShinyDittoRevealBody(disguiseName) : l.notifDittoRevealBody(disguiseName))
         save()
-        applyUsage(0)   // 이월분으로 메타몽 졸업 재평가(rare 3B라 보통 즉시 졸업 아님)
+        applyUsage(0)   // 이월분으로 메타몽 졸업 재평가(rare 300M이라 보통 즉시 졸업 아님)
         isRevealingDitto = false   // Details are enrichment, not part of the reveal transaction.
         if detailProvider != nil {
             await loadPokemonDetails(speciesID: PokemonOdds.dittoSpeciesID)
@@ -1209,15 +1224,24 @@ final class CompanionStore {
         }
     }
 
-    /// 부화 종 선정 — 하드코딩 풀 없이 PokéAPI 1~5세대 base 전체(329종)에서 가중 선택.
+    /// 부화 종 선정 — 하드코딩 풀 없이 PokéAPI 관동(전국도감 #1...151) base 전체에서 가중 선택.
     ///   ① base 인덱스(id + capture_rate)를 GraphQL 1쿼리로 취득(30일 디스크 캐시 → 보통 0콜)
-    ///   ② 가중치 = 공식 capture_rate 그대로(캐터피 255 vs 뮤츠 3 = 85:1, 전설군 ≈ 0.77%)
+    ///   ② 가중치 = 공식 capture_rate 그대로(캐터피 255 vs 뮤츠 3 = 85:1)
     ///      단, 이미 수집한 base 는 가중치 ½(미수집 부스트 — 재부화/shiny 사냥은 열어둠)
     ///   ③ 누적 가중치에서 정확히 1롤 — 루프/재롤 없음, 시간 상한 확정적
     /// 인덱스 취득 실패(오프라인 + 캐시 없음) 시 nil → 알 유지, 다음 갱신 틱 재시도.
     private func chooseBase() async -> Int? {
         let tier = state.eggTier
-        if let full = try? await provider.baseSpeciesIndex(), !full.isEmpty {
+        if let fetched = try? await provider.baseSpeciesIndex(), !fetched.isEmpty {
+            // Providers should already enforce this boundary, but filter at the consumer too so
+            // stale caches or third-party implementations cannot reintroduce later generations.
+            let full = fetched.filter {
+                PokemonAssets.hasAnimatedSprite(speciesID: $0.id) && $0.id != PokemonOdds.dittoSpeciesID
+            }
+            guard !full.isEmpty else {
+                AppLog.write("hatch: base index had no supported Gen I candidates — egg kept")
+                return nil
+            }
             // 등급 보증 알은 후보를 먼저 좁힌다 — capture_rate 상한이 곧 등급 하한이므로
             // (Rarity.captureRateCeiling) 전설도 자연히 포함된다("희귀 이상"에 전설이 들어가는 게 정상).
             // 좁힌 결과가 비면 보증을 못 지키므로 전체 풀로 폴백하지 말고 알을 유지한다(다음 틱 재시도).
@@ -1505,7 +1529,16 @@ final class CompanionStore {
         // 불러오기 경계와 같은 정규화를 디스크에서 읽을 때도 건다. 불러오기만 막으면 **이미 저장된**
         // 극단값은 그대로 남아, 앱이 매 기동마다 같은 값을 읽어 산술 트랩으로 죽는 상태를 못 벗어난다
         // (디코드는 *성공*하므로 위의 .corrupt 복구도 발동하지 않는다). 여기서 걸면 자가 복구된다.
-        state = SaveTransfer.sanitized(s)
+        let cleaned = SaveTransfer.sanitized(s)
+        state = cleaned
+        // Persist one-time migrations (including removal of unsupported caught species) so the
+        // old records do not reappear on a later launch or in a subsequent exported save.
+        let comparisonEncoder = JSONEncoder()
+        comparisonEncoder.outputFormatting = [.sortedKeys]
+        if let before = try? comparisonEncoder.encode(s),
+           let after = try? comparisonEncoder.encode(cleaned), before != after {
+            save()
+        }
     }
     private func save() {
         refreshRepresentativeSubject()

@@ -178,7 +178,7 @@ enum SpriteLoader {
         return cropped
     }
 
-    /// 정적 스프라이트. animated=true 면 Gen-V 움직이는 스프라이트(없으면 정적으로 폴백).
+    /// 정적 스프라이트. animated=true 면 Gen-I 움직이는 스프라이트(없으면 정적으로 폴백).
     /// shiny=true 는 색이 다른 스프라이트 — 미제공 종이면 일반으로 폴백.
     static func image(speciesID: Int, animated: Bool = false, shiny: Bool = false,
                       store: SpriteStore = .shared) async -> NSImage? {
@@ -264,7 +264,7 @@ enum SpriteLoader {
 
 /// 스프라이트를 정사각 프레임에 넣을 때의 **비율 유지** 기하 — 팝오버(SpriteView)와 메뉴바가 공유한다.
 ///
-/// Gen-V 움직이는 스프라이트(GIF)는 캔버스가 종마다 다르고 정사각이 아니다 — 잭키(#325) 36×66,
+/// Gen-I 움직이는 스프라이트(GIF)는 캔버스가 종마다 다르고 정사각이 아니다 — 예: 36×66,
 /// 피카츄(#25) 50×46, 팬텀(#143) 74×75. 반면 정적 스프라이트는 96×96, 아이템은 30×30 으로 전부
 /// 정사각이라 "size×size 로 늘려 채우기"가 정적 경로에서는 아무 증상이 없다가 GIF 경로에서만
 /// 왜곡으로 드러났다(잭키 = 가로 1.83배). 두 호출부가 같은 식을 쓰게 여기로 모은다.

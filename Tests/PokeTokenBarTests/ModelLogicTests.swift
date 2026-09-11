@@ -61,7 +61,13 @@ final class PokeAPILanguageTests: XCTestCase {
 // MARK: EvoLine 에셋 지원 범위
 
 final class EvoLineAssetTests: XCTestCase {
-    /// PokéAPI 원본 체인에 Gen-V 이후 진화형이 이어져도, 서비스가 제공하는 GIF가 있는 형태만
+    func testAnimatedSpeciesRangeIsGenOneOnly() {
+        XCTAssertEqual(PokemonAssets.animatedSpeciesIDs, 1...151)
+        XCTAssertTrue(PokemonAssets.hasAnimatedSprite(speciesID: 151))
+        XCTAssertFalse(PokemonAssets.hasAnimatedSprite(speciesID: 152))
+    }
+
+    /// PokéAPI 원본 체인에 1세대 이후 진화형이 이어져도, 관동 도감 범위의 형태만
     /// 실제 진화 라인과 단계 수에 남아야 한다. 예: 망키(#56) → 성원숭(#57) → 저승갓숭(#979).
     func testKeepsOnlyFormsWithAnimatedAssets() {
         let line = EvoLine(
@@ -73,6 +79,14 @@ final class EvoLineAssetTests: XCTestCase {
         XCTAssertEqual(line.totalForms, 2)
         XCTAssertEqual(line.tree.finalIDs, [57])
         XCTAssertNil(line.tree.node(withID: 979))
+    }
+
+    func testSupportedSpeciesCanBeProjectedFromLaterBabyRoot() {
+        let raw = evoNode(172, [evoNode(25, [evoNode(26)])])
+        let projected = raw.node(withID: 25)?.keepingAnimatedSprites()
+        XCTAssertEqual(projected?.speciesID, 25)
+        XCTAssertEqual(projected?.finalIDs, [26])
+        XCTAssertNil(projected?.node(withID: 172))
     }
 }
 

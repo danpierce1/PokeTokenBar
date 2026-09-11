@@ -226,7 +226,7 @@ final class DifficultyTests: XCTestCase {
         XCTAssertGreaterThan(s.eggTokensToHatch, 0)
     }
 
-    /// 가장 낮은 배율에서도 어떤 임계·가격도 0 으로 무너지지 않는다(가장 작은 기준값이 알 5M).
+    /// 가장 낮은 배율에서도 어떤 임계·가격도 0 으로 무너지지 않는다(가장 작은 기준값이 알 500K).
     func testNothingCollapsesToZeroAtMinimumDifficulty() async {
         let lo = PokemonBalance.difficultyRange.lowerBound
         XCTAssertGreaterThan(PokemonBalance.scaled(PokemonBalance.eggHatchThreshold, by: lo), 0)

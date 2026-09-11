@@ -181,7 +181,7 @@ final class SpriteImageCacheTests: XCTestCase {
         let item = await SpriteLoader.itemImage(name: "rare-candy", store: store)
         XCTAssertNil(item)
 
-        // A species outside Gen V has no GIF; that nil path must still try its PNG.
+        // A species outside Gen I has no GIF; that nil path must still try its PNG.
         try png.write(to: dir.appendingPathComponent("1000-s.png"))
         let staticOnly = await SpriteLoader.image(speciesID: 1000, animated: true, store: store)
         XCTAssertNotNil(staticOnly)

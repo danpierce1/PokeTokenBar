@@ -81,7 +81,7 @@ struct SpriteSubject: Equatable {
 }
 
 /// 스프라이트 1개(런타임 로드 + 캐시). 없으면 알 글리프. bob 으로 가벼운 상하 움직임.
-/// animated=true 면 Gen-V GIF 프레임을 순환(미지원/오프라인이면 정적+bob 으로 폴백).
+/// animated=true 면 Gen-I GIF 프레임을 순환(미지원/오프라인이면 정적+bob 으로 폴백).
 @MainActor
 struct SpriteView: View {
     let speciesID: Int?
@@ -176,8 +176,8 @@ struct SpriteView: View {
     var body: some View {
         Group {
             if !frames.isEmpty {
-                // GIF 애니메이션 경로 — 현재 프레임만 렌더. Gen-V GIF 캔버스는 종마다 비정사각이라
-                // (잭키 36×66) 정사각으로 늘리면 뚱뚱해진다 → fitted 로 비율 유지.
+                // GIF 애니메이션 경로 — 현재 프레임만 렌더. Gen-I GIF 캔버스는 종마다 비정사각이라
+                // (세로로 긴 36×66 캔버스) 정사각으로 늘리면 뚱뚱해진다 → fitted 로 비율 유지.
                 fitted(frames[frameIndex % frames.count].image)
             } else if let img {
                 fitted(animated && speciesID != nil ? SpriteLoader.animationPlaceholder(img) : img)

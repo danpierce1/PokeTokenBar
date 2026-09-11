@@ -112,6 +112,41 @@ final class SaveTransferTests: XCTestCase {
         XCTAssertEqual(envelope.state.representativeSpeciesID, 2, "대표 포켓몬 선택도 세이브와 함께 이동")
     }
 
+    func testSanitizedDropsLaterGenerationCaughtRecords() {
+        var state = CompanionState()
+        state.dex = [
+            DexEntry(baseID: 1, finalID: 3, chainOrder: [1, 152, 3], rarity: .common, caughtAt: transferNow,
+                     names: [1: ["en": "Bulbasaur"], 152: ["en": "Chikorita"], 3: ["en": "Venusaur"]]),
+            DexEntry(baseID: 200, finalID: 201, chainOrder: [200, 201], rarity: .common, caughtAt: transferNow)
+        ]
+        state.collectedFinals = ["1:3", "1:152", "200:201", "1-3"]
+        state.representativeSpeciesID = 200
+        state.pendingHatchID = 200
+
+        let cleaned = SaveTransfer.sanitized(state)
+
+        XCTAssertEqual(cleaned.dex.count, 1)
+        XCTAssertEqual(cleaned.dex[0].chainOrder, [1, 3])
+        XCTAssertEqual(Set(cleaned.dex[0].names?.keys ?? []), Set([1, 3]))
+        XCTAssertEqual(cleaned.collectedFinals, ["1:3", "1-3"])
+        XCTAssertNil(cleaned.representativeSpeciesID)
+        XCTAssertNil(cleaned.pendingHatchID)
+    }
+
+    func testStoreLoadPersistsCaughtRecordMigration() throws {
+        let url = tempURL("caught-migration")
+        var state = CompanionState()
+        state.dex = [
+            DexEntry(baseID: 200, finalID: 201, chainOrder: [200, 201], rarity: .common, caughtAt: transferNow)
+        ]
+        try JSONEncoder().encode(state).write(to: url)
+
+        _ = store(at: url)
+
+        let persisted = try JSONDecoder().decode(CompanionState.self, from: Data(contentsOf: url))
+        XCTAssertTrue(persisted.dex.isEmpty)
+    }
+
     func testRoundTripPreservesActiveRepeatGrowthBoost() throws {
         var original = CompanionState()
         original.active = MonState(
@@ -124,7 +159,7 @@ final class SaveTransferTests: XCTestCase {
 
         XCTAssertTrue(envelope.state.active?.hasGrowthBoost == true)
         XCTAssertEqual(envelope.state.active?.usedAtStage, 12_000_000)
-        XCTAssertEqual(envelope.state.active?.phaseThreshold, 62_500_000)
+        XCTAssertEqual(envelope.state.active?.phaseThreshold, 6_250_000)
     }
 
     /// [핵심] 봉투가 없으면 `CompanionState` 의 관대 디코딩이 아무 JSON 이나 빈 상태로 흡수해

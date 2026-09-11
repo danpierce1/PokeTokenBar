@@ -159,7 +159,7 @@ final class FloatingPetEnergyTests: XCTestCase {
     /// 에서 22s = 1/8 속도). 22px 에서 "끊김이 안 보인다"는 판단은 프레임 레이트에만 맞는 얘기였고
     /// 재생 속도가 8배 늘어나는 건 놓쳤다(사용자 지적, 2026-08-20). 캡은 hold 가 아니라 decimate 다.
     func testCapPreservesPlaybackSpeed() {
-        let native = Self.uniformFrames(count: 55, delay: 0.05)   // 2.75s, 20fps — Gen-V 실제 스프라이트
+        let native = Self.uniformFrames(count: 55, delay: 0.05)   // 2.75s, 20fps — Gen-I 실제 스프라이트
         for floor in [0.2, 0.4] {
             let capped = GIFDecoder.capFrameRate(native, floor: floor)
             let total = capped.reduce(0) { $0 + $1.delay }

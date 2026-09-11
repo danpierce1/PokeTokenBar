@@ -16,7 +16,7 @@ struct PokemonDetails: Codable, Sendable, Equatable {
 
     var baseStatTotal: Int { baseStats.values.reduce(0, +) }
 
-    /// Invariant: hatchable species are capped at Gen V by animated-sprite availability.
+    /// Invariant: hatchable species are capped at Gen I by animated-sprite availability.
     /// Keep this learnset selection in sync if that species bound is ever raised.
     static let preferredVersionGroup = "black-2-white-2"
 

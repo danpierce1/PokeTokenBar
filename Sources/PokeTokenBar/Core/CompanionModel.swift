@@ -110,15 +110,16 @@ enum Rarity: String, Codable, Sendable {
 /// 형태 k개 라인에서 i번째 형태 성장 비용 = T·i / (k(k+1)/2) → 합 = T, 단계↑일수록 비용↑.
 enum PokemonBalance {
     /// 알 부화 임계 — 이만큼 토큰을 써야 알이 깨진다(즉시 부화 대신 기대감). 초과분은 부화체 성장에 이월.
-    static let eggHatchThreshold = 5_000_000
+    /// Progression thresholds are intentionally 10% of the original balance.
+    static let eggHatchThreshold = 500_000
     static let repeatGrowthMultiplier = 2
 
     static func graduationTotal(_ rarity: Rarity) -> Int {
         switch rarity {
-        case .common:    return    750_000_000
-        case .uncommon:  return  1_875_000_000
-        case .rare:      return  3_000_000_000
-        case .legendary: return  6_000_000_000
+        case .common:    return     75_000_000
+        case .uncommon:  return    187_500_000
+        case .rare:      return    300_000_000
+        case .legendary: return    600_000_000
         }
     }
     /// stageIndex(0-based)에서 다음 단계/졸업까지 필요한 토큰.
@@ -221,31 +222,28 @@ enum ItemKind: String, Codable, Sendable, CaseIterable {
 
 /// 이상한 사탕 밸런스 상수.
 enum RareCandy {
-    /// 사용 시 현재 포켓몬에 주입하는 XP(토큰 환산). 2× 성장의 최소 임계는 62.5M 이지만,
-    /// 기본 난이도·첫 부화에서는 초과 이월(<100M)이 다음 임계(125M)보다 작아 최대 1단계만 올린다.
-    /// 낮은 난이도나 반복 부화 보너스에서는 여러 단계를 진행할 수 있다.
-    static let xp = 100_000_000
+    /// 사용 시 현재 포켓몬에 주입하는 XP(토큰 환산). Progression values, including this
+    /// token-equivalent reward, are 10% of the original balance.
+    static let xp = 10_000_000
     /// 주간 한도 100% 도달 시 지급 개수(세션급은 1개).
     static let weeklyGrant = 5
-    /// 상점 구매가(재화 = 사용한 토큰: usedSinceInstall − spentTokens). XP 값어치(100M)의 5배.
-    /// 토큰이 "성장 미터 + 상점 지갑"으로 이중 사용되는 구조라, 가격을 XP 와 같게 두면 구매가 사실상
-    /// 공짜 추가성장(150M 써서 250M 성장)이 된다. 500M 로 두면 그 값 모으는 500M 패시브 성장 + 사탕
-    /// 100M = 실질 보너스 +20% 로 억제된다. 무료 획득(한도 100% 보상)이 항상 이득이도록 값어치보다 비싸게.
-    static let price = 500_000_000
+    /// 상점 구매가(재화 = 사용한 토큰: usedSinceInstall − spentTokens). Progression thresholds and
+    /// candy XP are reduced independently; this remains a premium sink for the token wallet.
+    static let price = 50_000_000
 }
 
 /// 민트 밸런스 상수.
 enum Mint {
     /// 상점 구매가. 성격 변경은 순수 코스메틱(성장·능력치 무관)이라 밸런스 근거가 없어 "느낌" 값 —
-    /// 사탕(500M)의 1/5로 싸게 둬서 성격을 마음에 들 때까지 굴려보는 가벼운 재미. 성장을 안 줘서
+    /// 사탕(50M)의 1/5로 싸게 둬서 성격을 마음에 들 때까지 굴려보는 가벼운 재미. 성장을 안 줘서
     /// 이중계산 이슈도 없음(가격 = 순수 소비).
-    static let price = 100_000_000
+    static let price = 10_000_000
 }
 
 /// 이로치 부적 밸런스 상수 — 보유형(1회 구매·영구, 소비 안 됨).
 enum ShinyCharm {
-    /// 상점 구매가. 앞으로의 모든 부화에 적용되는 영구 럭 업그레이드라 프리미엄(레어 1마리 졸업분=3B).
-    static let price = 3_000_000_000
+    /// 상점 구매가. 앞으로의 모든 부화에 적용되는 영구 럭 업그레이드라 프리미엄(고정 300M).
+    static let price = 300_000_000
     /// 보유 시 이로치 부화 확률 분모 — 1/64 → 1/48 (+33%). 본가 '반짝이 부적'(이로치 확률↑) 오마주.
     /// ×2(1/32)는 과해 절제. 이미 부화한 개체엔 소급 없음(이로치는 부화 순간 확정).
     static let shinyDenominator: UInt64 = 48
@@ -255,8 +253,8 @@ enum ShinyCharm {
 enum FreshEgg {
     /// 상점 구매가. 마음에 안 드는 부화를 리롤하는 프리미엄(쌓인 토큰의 활용처). 폐기 개체는 졸업이
     /// 아니라 그냥 사라지므로 도감·확률(collectedFinals)에 무영향 — "뽑은 적 없던 것처럼". 새 알은
-    /// 처음부터 재인큐베이션(5M) 필요 + 성장(usedAtStage) 소멸이라 스팸/파밍이 자연 억제된다.
-    static let price = 1_000_000_000
+    /// 처음부터 재인큐베이션(500K) 필요 + 성장(usedAtStage) 소멸이라 스팸/파밍이 자연 억제된다.
+    static let price = 100_000_000
 
     /// 상점에서 파는 알 — 보증 없음(기본) → 고급 이상 → 희귀 이상. `nil` = 등급 보증 없는 기존 알.
     /// **전설 전용 알은 팔지 않는다**(등급 하한을 capture_rate 로 표현할 수 없고, 최고 등급을 확정
@@ -264,12 +262,12 @@ enum FreshEgg {
     static let shopTiers: [Rarity?] = [nil, .uncommon, .rare]
 
     /// 등급 보증 알의 가격 — 배율은 새 상수를 짓지 않고 **기존 졸업 총량 표**를 그대로 쓴다
-    /// (common 750M : uncommon 1.875B : rare 3B = 1 : 2.5 : 4 → 1B / 2.5B / 4B).
+    /// (common 75M : uncommon 187.5M : rare 300M = 1 : 2.5 : 4 → 100M / 250M / 400M).
     ///
     /// 확률 배율(고급 7.16% : 희귀 6.98% ≈ 1 : 2.03)로 매기면 안 된다 — 그러면 같은 값으로 고급 알
     /// 2개를 사는 쪽이 희귀+ 기대 1.039마리·전설 0.104마리로 희귀 알 1개(1.000·0.100)를 모든 축에서
     /// 앞질러 상위 티어가 완전 열등재가 된다. 졸업량 배율이라야 상위 티어가 희귀+ 1마리당 4.00B 로
-    /// 하위 반복 구매(4.81B)보다 싸다.
+    /// 하위 반복 구매(481M)보다 싸다.
     static func price(guaranteeing tier: Rarity?) -> Int {
         guard let tier else { return price }
         let multiplier = Double(PokemonBalance.graduationTotal(tier)) / Double(PokemonBalance.graduationTotal(.common))
@@ -311,9 +309,13 @@ struct CandyGrant: Equatable, Sendable {
 }
 
 /// 현재 서비스가 제공하는 움직이는 포켓몬 스프라이트 범위.
-/// PokéAPI 의 Gen-V animated 에셋은 전국도감 #1...649까지만 존재한다.
+/// 앱은 관동지방(전국도감 #1...151)만 사용한다.
 enum PokemonAssets {
-    static let animatedSpeciesIDs = 1...649
+    static let animatedSpeciesIDs = 1...151
+
+    /// REST 인덱스 구축이 일시적인 네트워크 오류로 일부만 채워졌을 때의 최소 유효 크기.
+    /// Gen I의 base species는 이 범위의 절반보다 많으므로, 절반 미만은 불완전한 결과로 본다.
+    static let minimumBaseIndexEntries = animatedSpeciesIDs.count / 2
 
     static func hasAnimatedSprite(speciesID: Int) -> Bool {
         animatedSpeciesIDs.contains(speciesID)
@@ -710,4 +712,4 @@ struct CompanionState: Codable, Sendable {
 }
 
 // NOTE: 부화 후보는 더 이상 하드코딩하지 않는다 — CompanionStore.chooseBase() 가
-// PokéAPI 전수(1~5세대)를 capture_rate 가중 rejection sampling 으로 선정한다.
+// PokéAPI 관동(전국도감 #1...151)을 capture_rate 가중 rejection sampling 으로 선정한다.

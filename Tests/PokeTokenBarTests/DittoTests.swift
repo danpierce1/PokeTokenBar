@@ -10,7 +10,7 @@ private func dLine(base: Int, tree: EvoNode, rarity: Rarity) -> EvoLine {
     for id in ids(tree) { names[id] = ["en": "P\(id)", "ko": "포\(id)", "ja": "ポ\(id)"] }
     return EvoLine(baseID: base, tree: tree, rarity: rarity, names: names)
 }
-private let disguiseLine = dLine(base: 1, tree: dNode(1, [dNode(2, [dNode(3)])]), rarity: .common) // 커먼 3형태: 첫 진화 125M
+private let disguiseLine = dLine(base: 1, tree: dNode(1, [dNode(2, [dNode(3)])]), rarity: .common)
 private let prunedDisguiseLine = dLine(base: 206, tree: dNode(206, [dNode(982)]), rarity: .common)
 private let dittoLine = dLine(base: 132, tree: dNode(132), rarity: .rare)                           // 메타몽: rare 단일형태
 private let dNow = Date(timeIntervalSince1970: 1_700_000_000)
@@ -127,7 +127,8 @@ final class DittoRevealTests: XCTestCase {
     /// [트리거 브랜치] 첫 진화 임계에서 진화 대신 메타몽으로 리빌 — 진화 자체를 밟지 않는다.
     func testRevealAtFirstEvolution() async {
         let s = seedDisguise()
-        s.applyUsage(300_000_000)   // 라인 미로딩 중 적립(첫 진화 125M 초과) — 진화/리빌 보류
+        let firstThreshold = s.threshold
+        s.applyUsage(300_000_000)   // 라인 미로딩 중 적립 — 진화/리빌 보류
         XCTAssertEqual(s.state.active?.usedAtStage, 300_000_000)
         XCTAssertEqual(s.currentSpeciesID, 1, "아직 위장체 표시")
         XCTAssertFalse(s.state.active?.dittoRevealed ?? true)
@@ -141,7 +142,7 @@ final class DittoRevealTests: XCTestCase {
         XCTAssertEqual(s.state.active?.stageIndex, 0)
         XCTAssertEqual(s.state.active?.pathIDs, [132])
         XCTAssertEqual(s.state.active?.plannedPathIDs, [132])
-        XCTAssertEqual(s.state.active?.usedAtStage, 300_000_000 - 125_000_000, "첫 진화 초과분 이월")
+        XCTAssertEqual(s.state.active?.usedAtStage, 300_000_000 - firstThreshold, "첫 진화 초과분 이월")
         XCTAssertNotNil(s.state.active?.dittoDisguise, "위장 마커 보존")
         XCTAssertEqual(s.celebration, .dittoReveal(shiny: false), "리빌 연출 발화")
     }
@@ -164,8 +165,8 @@ final class DittoRevealTests: XCTestCase {
         XCTAssertEqual(profile?.gender, .genderless)
         XCTAssertEqual(profile?.abilityName, "limber")
         XCTAssertEqual(profile?.moves.map(\.name), ["transform"])
-        XCTAssertEqual(profile?.growthTokens, 500_000_000)
-        XCTAssertEqual(profile?.level, 20, "revealing Ditto preserves earned phase progress")
+        XCTAssertEqual(profile?.growthTokens, PokemonBalance.graduationTotal(.rare))
+        XCTAssertEqual(profile?.level, 100, "revealing Ditto preserves earned phase progress")
     }
 
     func testBoostedEasyDittoRetainsLevelAndIdentityAcrossReveal() async throws {
@@ -176,7 +177,8 @@ final class DittoRevealTests: XCTestCase {
         s.setGrowthDifficulty(0.1)
         await s.loadPokemonDetails(speciesID: 1)
         let initial = try XCTUnwrap(s.state.active?.profile)
-        s.applyUsage(7_250_000) // 6.25M reveal threshold plus 1M raw carryover.
+        let revealThreshold = s.threshold
+        s.applyUsage(revealThreshold + 1_000_000) // reveal threshold plus 1M raw carryover.
         let earnedLevel = s.state.active?.profile?.level
         await drainReveal(s)
         await s.loadPokemonDetails(speciesID: PokemonOdds.dittoSpeciesID)
@@ -198,7 +200,7 @@ final class DittoRevealTests: XCTestCase {
 
     func testBoostedDisguiseRevealsAtTheHalvedThresholdAndKeepsTheBoost() async throws {
         let s = seedDisguise(boosted: true)
-        s.applyUsage(62_500_000)
+        s.applyUsage(s.threshold)
 
         await drainReveal(s)
 
@@ -206,7 +208,9 @@ final class DittoRevealTests: XCTestCase {
         XCTAssertTrue(revealed.dittoRevealed)
         XCTAssertTrue(revealed.hasGrowthBoost)
         XCTAssertEqual(revealed.usedAtStage, 0)
-        XCTAssertEqual(revealed.phaseThreshold, 1_500_000_000)
+        XCTAssertEqual(revealed.phaseThreshold, PokemonBalance.phaseThreshold(
+            rarity: .rare, totalForms: 1, stageIndex: 0,
+            growthMultiplier: PokemonBalance.repeatGrowthMultiplier))
     }
 
     /// [회귀] 위장 종만 근거로 고정한 대표 선택은 리빌과 함께 무효가 된다. 공개 뒤에는 유령 위장 종을
@@ -234,7 +238,7 @@ final class DittoRevealTests: XCTestCase {
     func testPrunedLeafDisguiseRevealsBeforeGraduation() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("ditto-pruned-\(UUID().uuidString).json")
         let threshold = PokemonBalance.phaseThreshold(rarity: .common, totalForms: 1, stageIndex: 0)
-        XCTAssertEqual(threshold, 750_000_000)
+        XCTAssertEqual(threshold, PokemonBalance.graduationTotal(.common))
         XCTAssertTrue(prunedDisguiseLine.tree.children.isEmpty, "#982 제거 후 #206은 leaf여야 한다")
         let active = "{\"baseID\":206,\"pathIDs\":[206],\"plannedPathIDs\":[206,982],\"stageIndex\":0,"
             + "\"usedAtStage\":\(threshold),\"rarity\":\"common\",\"totalForms\":2,\"isShiny\":true,"
@@ -315,7 +319,7 @@ final class DittoRevealTests: XCTestCase {
     /// 임계 미달이면 리빌하지 않는다(위장 유지).
     func testNoRevealBelowThreshold() async {
         let s = seedDisguise()
-        s.applyUsage(100_000_000)   // 첫 진화 125M 미달
+        s.applyUsage(max(0, s.threshold - 1))   // 첫 진화 임계 미달
         await drainReveal(s)        // (드레인해도 리빌 조건 미충족)
         XCTAssertFalse(s.state.active?.dittoRevealed ?? true, "임계 미달 → 위장 유지")
         XCTAssertEqual(s.currentSpeciesID, 1, "여전히 위장체")

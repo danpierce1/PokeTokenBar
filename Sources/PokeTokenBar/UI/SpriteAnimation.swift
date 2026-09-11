@@ -2,7 +2,7 @@ import AppKit
 import ImageIO
 import UniformTypeIdentifiers
 
-/// GIF 바이트 → 프레임(이미지 + 지속시간) 디코드. Gen-V 움직이는 스프라이트(메뉴바)용.
+/// GIF 바이트 → 프레임(이미지 + 지속시간) 디코드. Gen-I 움직이는 스프라이트(메뉴바)용.
 enum GIFDecoder {
     /// 각 프레임의 원본 이미지 + delay(초). 단일 프레임/디코드 실패 시 빈 배열.
     static func frames(from data: Data) -> [(image: NSImage, delay: TimeInterval)] {
@@ -23,7 +23,7 @@ enum GIFDecoder {
     /// 구간 길이만큼 hold 하므로, 루프 한 바퀴 길이는 원본과 같고 초당 프레임 수만 `1/floor` 로 준다.
     ///
     /// **왜 `max(floor, delay)` 가 아닌가:** 그 방식은 프레임 수를 그대로 두고 각 프레임을 늘리므로
-    /// 애니메이션 **전체가 느려진다**. Gen-V 스프라이트는 55프레임×0.05s(=2.75s, 20fps)라 floor 0.4s
+    /// 애니메이션 **전체가 느려진다**. Gen-I 스프라이트는 55프레임×0.05s(=2.75s, 20fps)라 floor 0.4s
     /// 에선 22s 루프 = 1/8 속도가 됐다. 원래 근거였던 "22px 에선 2.5fps 와 5fps 가 구분 안 된다"는
     /// 프레임 레이트에만 맞는 얘기였고, 재생 속도가 8배 늘어나는 건 놓친 것이다(사용자 지적,
     /// 2026-08-20 — 메뉴바가 팝오버보다 느리다는 리포트의 실제 원인). 2프레임 bob 에선 프레임 수가

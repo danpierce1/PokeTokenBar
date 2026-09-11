@@ -139,7 +139,8 @@ enum SaveTransfer {
     /// (`load()` 의 `.corrupt` 자동복구는 디코드가 *성공*하므로 발동하지 않는다).
     ///
     /// 다운스트림 산술 지점마다 막으면 새 지점이 생길 때마다 재발하므로, 값이 **들어오는 경계 한 곳**에서
-    /// 정규화한다. 대상은 실제로 산술에 쓰이는 필드뿐이다 — 도감·인벤토리 항목은 잘라내지 않는다(데이터 손실).
+    /// 정규화한다. 대상은 실제로 산술에 쓰이는 필드와 현재 지원 범위를 벗어난 포켓몬 기록이다.
+    /// 인벤토리 항목은 잘라내지 않는다(데이터 손실).
     static func sanitized(_ state: CompanionState) -> CompanionState {
         func clampToken(_ v: Int) -> Int { min(max(0, v), maxTokenValue) }
         var s = state
@@ -169,8 +170,52 @@ enum SaveTransfer {
             s.active = active
         }
         for index in s.dex.indices { s.dex[index].profile?.sanitize() }
+
+        // This build only supports National Dex #1–#151. Remove already-caught records from
+        // older saves instead of allowing later-generation species to remain in the Pokédex,
+        // collection weighting, or representative selection after an upgrade.
+        s.dex = s.dex.compactMap { entry in
+            guard PokemonAssets.hasAnimatedSprite(speciesID: entry.baseID),
+                  PokemonAssets.hasAnimatedSprite(speciesID: entry.finalID) else { return nil }
+            var cleaned = entry
+            cleaned.chainOrder = entry.chainOrder.filter {
+                PokemonAssets.hasAnimatedSprite(speciesID: $0)
+            }
+            guard !cleaned.chainOrder.isEmpty,
+                  cleaned.chainOrder.contains(entry.finalID) else { return nil }
+            if let names = entry.names {
+                cleaned.names = Dictionary(uniqueKeysWithValues: names.filter {
+                    PokemonAssets.hasAnimatedSprite(speciesID: $0.key)
+                })
+            }
+            return cleaned
+        }
+        s.collectedFinals = Set(s.collectedFinals.filter { Self.isSupportedCollectionKey($0) })
+        if let pending = s.pendingHatchID,
+           !PokemonAssets.hasAnimatedSprite(speciesID: pending) {
+            s.pendingHatchID = nil
+        }
+        if let selected = s.representativeSpeciesID,
+           !PokemonAssets.hasAnimatedSprite(speciesID: selected) {
+            s.representativeSpeciesID = nil
+        }
         s.reconcileRepresentativeSelection()
         return s
+    }
+
+    /// Collection keys are normally `baseID:finalID`. A pre-release test/save format used `-`,
+    /// so accept that separator while applying the same species boundary; unknown formats are
+    /// preserved rather than silently deleting unrelated future metadata.
+    private static func isSupportedCollectionKey(_ key: String) -> Bool {
+        let separators: [Character] = [":", "-"]
+        for separator in separators {
+            let parts = key.split(separator: separator, omittingEmptySubsequences: true)
+            guard parts.count == 2,
+                  let base = Int(parts[0]), let final = Int(parts[1]) else { continue }
+            return PokemonAssets.hasAnimatedSprite(speciesID: base)
+                && PokemonAssets.hasAnimatedSprite(speciesID: final)
+        }
+        return true
     }
 
     /// 다른 기기에서 온 상태를 **이 기기 기준으로 재정렬**한다.
@@ -194,7 +239,7 @@ enum SaveTransfer {
                                      todayTokensByProvider: [String: Int],
                                      todayDate: String,
                                      hasUsageData: Bool) -> CompanionState {
-        var state = imported
+        var state = sanitized(imported)
         state.language = current.language
         state.candyGrantTier = mergedGrantTier(imported.candyGrantTier, current.candyGrantTier)
         state.candyFeatureSeeded = imported.candyFeatureSeeded || current.candyFeatureSeeded

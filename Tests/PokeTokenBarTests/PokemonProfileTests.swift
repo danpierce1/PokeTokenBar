@@ -169,7 +169,7 @@ final class PokemonProfileLogicTests: XCTestCase {
         profile.enrich(with: profileDetails)
         let ivs = profile.ivs
 
-        profile.applyGrowth(125_000_000, rarity: .common)
+        profile.applyGrowth(12_500_000, rarity: .common)
         profile.rebaseForSpeciesIdentity(from: .common, to: .rare)
 
         XCTAssertEqual(profile.instanceID, "ditto")
@@ -179,7 +179,7 @@ final class PokemonProfileLogicTests: XCTestCase {
         XCTAssertNil(profile.abilityName)
         XCTAssertFalse(profile.abilityIsHidden)
         XCTAssertTrue(profile.moves.isEmpty)
-        XCTAssertEqual(profile.growthTokens, 500_000_000)
+        XCTAssertEqual(profile.growthTokens, 50_000_000)
         XCTAssertEqual(profile.level, 20)
     }
 }

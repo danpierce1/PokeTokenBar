@@ -5,6 +5,21 @@ import Observation
 // MARK: 경제
 
 final class PokemonBalanceTests: XCTestCase {
+    func testProgressionThresholdsAreTenPercentOfOriginalBalance() {
+        XCTAssertEqual(PokemonBalance.eggHatchThreshold, 500_000)
+        XCTAssertEqual(PokemonBalance.graduationTotal(.common), 75_000_000)
+        XCTAssertEqual(PokemonBalance.graduationTotal(.uncommon), 187_500_000)
+        XCTAssertEqual(PokemonBalance.graduationTotal(.rare), 300_000_000)
+        XCTAssertEqual(PokemonBalance.graduationTotal(.legendary), 600_000_000)
+        XCTAssertEqual(RareCandy.xp, 10_000_000)
+        XCTAssertEqual(RareCandy.price, 50_000_000)
+        XCTAssertEqual(Mint.price, 10_000_000)
+        XCTAssertEqual(ShinyCharm.price, 300_000_000)
+        XCTAssertEqual(FreshEgg.price, 100_000_000)
+        XCTAssertEqual(FreshEgg.price(guaranteeing: .uncommon), 250_000_000)
+        XCTAssertEqual(FreshEgg.price(guaranteeing: .rare), 400_000_000)
+    }
+
     func testGraduationTotalIsConstantPerRarityRegardlessOfStages() {
         for rarity in [Rarity.common, .uncommon, .rare, .legendary] {
             let T = PokemonBalance.graduationTotal(rarity)
@@ -32,7 +47,7 @@ final class PokemonBalanceTests: XCTestCase {
             PokemonBalance.phaseThreshold(
                 rarity: .common, totalForms: 3, stageIndex: 0,
                 growthMultiplier: PokemonBalance.repeatGrowthMultiplier),
-            62_500_000)
+            6_250_000)
     }
     func testHigherStageCostsMore() {
         for k in 2...3 {
@@ -876,8 +891,8 @@ final class CompanionStoreTests: XCTestCase {
     func testEggDoesNotHatchBelowThreshold() async {
         let s = store(linear3)
         base(s)
-        use(s, 500_000)   // < 1M
-        XCTAssertEqual(s.state.eggUsage, 500_000)
+        use(s, PokemonBalance.eggHatchThreshold - 1)
+        XCTAssertEqual(s.state.eggUsage, PokemonBalance.eggHatchThreshold - 1)
         XCTAssertTrue(s.isEgg)
         await s.hatchIfNeeded()
         XCTAssertNil(s.state.active)   // 임계 미만 → 미부화
@@ -886,7 +901,7 @@ final class CompanionStoreTests: XCTestCase {
     func testEggHatchesAtThreshold() async {
         let s = store(linear3)
         base(s)
-        use(s, PokemonBalance.eggHatchThreshold)   // = 1M
+        use(s, PokemonBalance.eggHatchThreshold)   // = 500K
         XCTAssertEqual(s.state.eggUsage, PokemonBalance.eggHatchThreshold)
         await s.hatchIfNeeded()
         XCTAssertNotNil(s.state.active)
@@ -1178,12 +1193,15 @@ final class CompanionStoreTests: XCTestCase {
         let s2 = CompanionStore(provider: StubProvider(value: linear3), clock: { fixedNow },
                                 fileURL: url, rng: SeededRNG(seed: 1))
         XCTAssertTrue(s2.state.active?.hasGrowthBoost == true)
-        XCTAssertEqual(s2.tokensToNext, 62_500_000)
+        XCTAssertEqual(s2.tokensToNext, PokemonBalance.phaseThreshold(
+            rarity: .common, totalForms: 3, stageIndex: 0,
+            growthMultiplier: PokemonBalance.repeatGrowthMultiplier))
 
         let legacy = #"{"baseID":1,"pathIDs":[1],"stageIndex":0,"usedAtStage":0,"rarity":"common","totalForms":3}"#
         let decoded = try JSONDecoder().decode(MonState.self, from: Data(legacy.utf8))
         XCTAssertFalse(decoded.hasGrowthBoost)
-        XCTAssertEqual(decoded.phaseThreshold, 125_000_000)
+        XCTAssertEqual(decoded.phaseThreshold,
+                       PokemonBalance.phaseThreshold(rarity: .common, totalForms: 3, stageIndex: 0))
     }
 
     func testReloadPreservesCompleteShortPlannedRouteLength() async {
@@ -1609,16 +1627,18 @@ final class CompanionIdentityTests: XCTestCase {
                                 fileURL: url, rng: SeededRNG(seed: 5))
         XCTAssertNotNil(s2.state.active)
         XCTAssertNil(s2.currentLine)
-        // 라인 없는 상태에서 stage0 임계(125M) 초과 델타 → 유실 없이 적립, 진화는 보류
-        s2.applyUsage(300_000_000)
-        XCTAssertEqual(s2.state.active?.usedAtStage, 300_000_000, "라인 미로딩 중 델타가 유실되면 안 된다")
+        // 라인 없는 상태에서 stage0 임계 초과 델타 → 유실 없이 적립, 진화는 보류
+        let firstThreshold = PokemonBalance.phaseThreshold(rarity: .common, totalForms: 3, stageIndex: 0)
+        let delta = firstThreshold + 1_000
+        s2.applyUsage(delta)
+        XCTAssertEqual(s2.state.active?.usedAtStage, delta, "라인 미로딩 중 델타가 유실되면 안 된다")
         XCTAssertEqual(s2.state.active?.stageIndex, 0)
         // update → loadCurrentLine 완료 시 적립분으로 진화 판정(드레인)
         s2.update(todayTokensByProvider: ["test": 0], todayDate: "d1", monthTotal: 0, burnTier: .idle, limitWarning: false, hasUsageData: true)
         for _ in 0..<50 where s2.currentLine == nil { await Task.yield() }
         XCTAssertNotNil(s2.currentLine)
         XCTAssertEqual(s2.state.active?.stageIndex, 1, "라인 로드 후 적립분으로 진화해야 한다")
-        XCTAssertEqual(s2.state.active?.usedAtStage, 300_000_000 - 125_000_000)   // 초과분 이월
+        XCTAssertEqual(s2.state.active?.usedAtStage, 1_000)   // 초과분 이월
     }
 
     /// [회귀] 구버전 상태가 GIF 미지원 후대 진화형까지 진행했어도, 라인 재로딩 시 마지막 지원 형태로
@@ -1657,8 +1677,11 @@ final class CompanionIdentityTests: XCTestCase {
 
         let s = store(linear3, seed: seed)
         s.update(todayTokensByProvider: ["test": 0], todayDate: "d1", monthTotal: 0, burnTier: .idle, limitWarning: false, hasUsageData: true)
-        // 알 임계(5M) + stage0 임계(125M) 초과 → 부화 즉시 1회 진화하는 이월
-        s.update(todayTokensByProvider: ["test": 135_000_000], todayDate: "d1", monthTotal: 0, burnTier: .idle, limitWarning: false, hasUsageData: true)
+        // 알 임계 + stage0 임계 초과 → 부화 즉시 1회 진화하는 이월
+        let delta = PokemonBalance.eggHatchThreshold
+            + PokemonBalance.phaseThreshold(rarity: .common, totalForms: 3, stageIndex: 0)
+            + 1_000
+        s.update(todayTokensByProvider: ["test": delta], todayDate: "d1", monthTotal: 0, burnTier: .idle, limitWarning: false, hasUsageData: true)
         await s.hatchIfNeeded()
         XCTAssertEqual(s.state.active?.isShiny, true)
         XCTAssertEqual(s.state.active?.stageIndex, 1, "이월로 1회 진화했어야 함")
@@ -1669,8 +1692,10 @@ final class CompanionIdentityTests: XCTestCase {
     func testHatchCelebrationSkippedOnInstantGraduate() async {
         let s = store(noEvo, seed: 11)
         s.update(todayTokensByProvider: ["test": 0], todayDate: "d1", monthTotal: 0, burnTier: .idle, limitWarning: false, hasUsageData: true)
-        // 알 임계 + 졸업 총량(750M) 초과
-        s.update(todayTokensByProvider: ["test": 800_000_000], todayDate: "d1", monthTotal: 0, burnTier: .idle, limitWarning: false, hasUsageData: true)
+        // 알 임계 + 졸업 총량 초과
+        s.update(todayTokensByProvider: ["test": PokemonBalance.eggHatchThreshold
+                                          + PokemonBalance.graduationTotal(.common) + 1_000],
+                 todayDate: "d1", monthTotal: 0, burnTier: .idle, limitWarning: false, hasUsageData: true)
         await s.hatchIfNeeded()
         XCTAssertNil(s.state.active, "즉시 졸업")
         XCTAssertEqual(s.state.dex.count, 1)
@@ -1715,7 +1740,7 @@ final class CompanionIdentityTests: XCTestCase {
     /// capture_rate 가 곧 가중치 — cr 비율만큼 선택 구간이 좁아진다 (희귀種 낮은 확률).
     func testSamplerCaptureRateIsWeight() async {
         // [common 254, legendary 2] → roll 0..253 → common, 254..255 → legendary
-        let index = [BaseSpecies(id: 100, captureRate: 254), BaseSpecies(id: 200, captureRate: 2)]
+        let index = [BaseSpecies(id: 100, captureRate: 254), BaseSpecies(id: 101, captureRate: 2)]
         var legendarySeed: UInt64?, commonSeed: UInt64?
         for seed: UInt64 in 0..<3000 {
             var r = SeededRNG(seed: seed)
@@ -1724,7 +1749,7 @@ final class CompanionIdentityTests: XCTestCase {
             if roll < 254, commonSeed == nil { commonSeed = seed }
             if legendarySeed != nil, commonSeed != nil { break }
         }
-        for (seed, expected) in [(commonSeed!, 100), (legendarySeed!, 200)] {
+        for (seed, expected) in [(commonSeed!, 100), (legendarySeed!, 101)] {
             let p = IndexProvider(); p.index = index
             let s = samplerStore(p, seed: seed, preloadState: eggReadyState())
             await s.hatchIfNeeded()

@@ -9,7 +9,7 @@ struct BaseSpecies: Sendable, Codable {
 /// 포켓몬 라인 데이터 제공(주입 가능 — 테스트는 스텁 사용).
 protocol PokeProviding: Sendable {
     func line(baseSpeciesID: Int) async throws -> EvoLine
-    /// 1~5세대 base 전체 인덱스 (GraphQL 1쿼리, 디스크 캐시).
+    /// 관동(전국도감 #1...151) base 전체 인덱스 (GraphQL 1쿼리, 디스크 캐시).
     func baseSpeciesIndex() async throws -> [BaseSpecies]
     /// 단일 종이 base(진화 시작점)면 BaseSpecies, 아니면 nil.
     /// GraphQL 인덱스 엔드포인트 장애 시 REST(pokemon-species)로 부화 후보를 뽑는 폴백용.
@@ -48,6 +48,9 @@ actor PokeAPIClient: PokeProviding, PokemonDetailProviding {
 
     /// Default-form battle metadata. Memory → 30-day disk cache → REST, with stale disk fallback offline.
     func pokemonDetails(speciesID: Int) async throws -> PokemonDetails {
+        guard PokemonAssets.hasAnimatedSprite(speciesID: speciesID) else {
+            throw URLError(.fileDoesNotExist)
+        }
         if let cached = detailsCache[speciesID] { return cached }
         let file = Self.detailsDirectory.appendingPathComponent("\(speciesID).json")
         let disk = (try? Data(contentsOf: file))
@@ -101,6 +104,9 @@ actor PokeAPIClient: PokeProviding, PokemonDetailProviding {
     }
 
     func line(baseSpeciesID: Int) async throws -> EvoLine {
+        guard PokemonAssets.hasAnimatedSprite(speciesID: baseSpeciesID) else {
+            throw URLError(.fileDoesNotExist)
+        }
         if let cached = lineCache[baseSpeciesID] { return cached }
         let baseSpecies = try await species(baseSpeciesID)
         // PokéAPI 응답의 URL — 비정상/빈 값이면 force-unwrap 대신 throw(앱은 알 상태 유지).
@@ -108,7 +114,14 @@ actor PokeAPIClient: PokeProviding, PokemonDetailProviding {
             throw URLError(.badURL)
         }
         let chainDTO: ChainDTO = try await get(chainURL)
-        let tree = node(from: chainDTO.chain)
+        // Some Gen I species gained a baby pre-evolution later (for example Pichu →
+        // Pikachu). Start at the requested supported species rather than rejecting the
+        // whole chain because its root is outside the supported range.
+        guard let tree = node(from: chainDTO.chain)
+            .node(withID: baseSpeciesID)?
+            .keepingAnimatedSprites() else {
+            throw URLError(.cannotParseResponse)
+        }
         let rarity = Rarity.from(captureRate: baseSpecies.capture_rate,
                                  isLegendary: baseSpecies.is_legendary,
                                  isMythical: baseSpecies.is_mythical)
@@ -143,28 +156,32 @@ actor PokeAPIClient: PokeProviding, PokemonDetailProviding {
         let data: DataBox
     }
 
-    /// 1~5세대 base(진화라인 시작점) 전체 — PokéAPI GraphQL 1쿼리.
+    /// 관동(전국도감 #1...151) base(진화라인 시작점) 전체 — PokéAPI GraphQL 1쿼리.
     /// 우선순위: 메모리 캐시 → 디스크 캐시(30일 TTL) → GraphQL fetch(성공 시 디스크 갱신)
     /// → TTL 지난 디스크라도 있으면 사용(오프라인 폴백). 전부 실패 시 throw(알 유지, 다음 틱 재시도).
     func baseSpeciesIndex() async throws -> [BaseSpecies] {
         if let c = baseIndexCache { return c }
         let disk = (try? Data(contentsOf: Self.baseIndexFile))
             .flatMap { try? JSONDecoder().decode(BaseIndexSnapshot.self, from: $0) }
-        if let disk, Date().timeIntervalSince(disk.fetchedAt) < 30 * 86400, !disk.entries.isEmpty {
-            baseIndexCache = disk.entries
-            return disk.entries
+        if let disk, Date().timeIntervalSince(disk.fetchedAt) < 30 * 86400 {
+            let entries = Self.supportedBaseSpecies(disk.entries)
+            if !entries.isEmpty {
+                baseIndexCache = entries
+                return entries
+            }
         }
         do {
-            let entries = try await fetchBaseIndex()
+            let entries = Self.supportedBaseSpecies(try await fetchBaseIndex())
             baseIndexCache = entries
             if let data = try? JSONEncoder().encode(BaseIndexSnapshot(fetchedAt: Date(), entries: entries)) {
                 try? data.write(to: Self.baseIndexFile, options: .atomic)
             }
             return entries
         } catch {
-            if let disk, !disk.entries.isEmpty {   // 오프라인 — 오래된 인덱스라도 사용
-                baseIndexCache = disk.entries
-                return disk.entries
+            let entries = disk.map { Self.supportedBaseSpecies($0.entries) } ?? []
+            if !entries.isEmpty {   // 오프라인 — 오래된 인덱스라도 사용
+                baseIndexCache = entries
+                return entries
             }
             // GraphQL 다운 + 캐시 없음 → REST 로 인덱스를 백그라운드 구축(세션 1회).
             // 이번 부화는 per-hatch REST 폴백(chooseBaseViaREST)이 즉시 처리하고,
@@ -202,7 +219,7 @@ actor PokeAPIClient: PokeProviding, PokemonDetailProviding {
             start += batchSize
         }
         // 대부분 실패(네트워크 불안정)면 빈약한 인덱스를 영속하지 않고 다음 세션 재시도.
-        guard bases.count >= 150 else {
+        guard bases.count >= PokemonAssets.minimumBaseIndexEntries else {
             AppLog.write("base index: REST build incomplete (\(bases.count)) — not cached, will retry next session")
             return
         }
@@ -215,7 +232,8 @@ actor PokeAPIClient: PokeProviding, PokemonDetailProviding {
     }
 
     private func fetchBaseIndex() async throws -> [BaseSpecies] {
-        // 공식 GraphQL — evolves_from IS NULL(=base) + id ≤ 649(Gen-V 애니메이션 스프라이트 상한)
+        // 공식 GraphQL — ids ≤ 151 whose immediate pre-evolution is either absent or
+        // outside the supported range (for example Pichu → Pikachu).
         guard let url = URL(string: "https://graphql.pokeapi.co/v1beta2") else { throw URLError(.badURL) }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
@@ -223,7 +241,7 @@ actor PokeAPIClient: PokeProviding, PokemonDetailProviding {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         // 메타몽(#132)은 위장 리빌 전용 → 일반 부화 풀에서 제외(_neq).
         let maxID = PokemonAssets.animatedSpeciesIDs.upperBound
-        let query = "{ pokemonspecies(where: {evolves_from_species_id: {_is_null: true}, id: {_lte: \(maxID), _neq: \(PokemonOdds.dittoSpeciesID)}}, order_by: {id: asc}) { id capture_rate } }"
+        let query = "{ pokemonspecies(where: {_and: [{id: {_lte: \(maxID), _neq: \(PokemonOdds.dittoSpeciesID)}}, {_or: [{evolves_from_species_id: {_is_null: true}}, {evolves_from_species_id: {_gt: \(maxID)}}]}]}, order_by: {id: asc}) { id capture_rate } }"
         req.httpBody = try JSONSerialization.data(withJSONObject: ["query": query])
         let (data, resp) = try await URLSession.shared.data(for: req)
         guard (resp as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
@@ -243,9 +261,13 @@ actor PokeAPIClient: PokeProviding, PokemonDetailProviding {
     /// REST 폴백 — 단일 종 상세(pokemon-species/{id})로 base 여부·capture_rate 판정.
     /// GraphQL base 인덱스가 죽어도 REST(pokeapi.co/api/v2)는 별개 엔드포인트라 동작한다.
     func baseSpecies(id: Int) async throws -> BaseSpecies? {
-        guard id != PokemonOdds.dittoSpeciesID else { return nil }   // 메타몽은 위장 리빌 전용 — 일반 부화 제외
+        guard PokemonAssets.hasAnimatedSprite(speciesID: id),
+              id != PokemonOdds.dittoSpeciesID else { return nil }   // 메타몽은 위장 리빌 전용 — 일반 부화 제외
         let dto = try await species(id)
-        guard dto.evolves_from_species == nil else { return nil }   // 진화 중간체는 부화 후보 아님
+        let previousID = dto.evolves_from_species.map { Self.id(from: $0.url ?? "") } ?? 0
+        guard previousID == 0 || previousID > PokemonAssets.animatedSpeciesIDs.upperBound else {
+            return nil   // another supported species evolves into this one
+        }
         return BaseSpecies(id: id, captureRate: dto.capture_rate)
     }
 
@@ -261,6 +283,12 @@ actor PokeAPIClient: PokeProviding, PokemonDetailProviding {
                 children: link.evolves_to.map(node(from:)))
     }
     private func allIDs(_ n: EvoNode) -> [Int] { [n.speciesID] + n.children.flatMap(allIDs) }
+
+    private static func supportedBaseSpecies(_ entries: [BaseSpecies]) -> [BaseSpecies] {
+        entries.filter {
+            PokemonAssets.hasAnimatedSprite(speciesID: $0.id) && $0.id != PokemonOdds.dittoSpeciesID
+        }
+    }
 
     static func id(from speciesURL: String) -> Int {
         // ".../pokemon-species/{id}/"
